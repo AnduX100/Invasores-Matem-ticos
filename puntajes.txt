@@ -1,0 +1,3 @@
+
+Jorge: Puntaje: 10, Nivel: 2
+Jorge: Puntaje: 30, Nivel: 4
