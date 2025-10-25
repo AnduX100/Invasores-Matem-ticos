@@ -1,20 +1,65 @@
 import pygame
 import random
 import sys
-import os
+from pathlib import Path
 
-# ---------- INIT ----------
 pygame.init()
 try:
     pygame.mixer.init()
 except pygame.error:
     print("Aviso: No se pudo inicializar el audio. El juego correrá sin sonidos.")
 
-# ---------- CONST ----------
+APP_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+IMG_DIR  = APP_ROOT / "assets" / "img"
+SFX_DIR  = APP_ROOT / "assets" / "sfx"
+SCORE_FILE = APP_ROOT / "puntajes.txt"  
+
+def _first_existing(candidates):
+    """Devuelve el primer Path existente o None."""
+    for p in candidates:
+        if p and Path(p).exists():
+            return Path(p)
+    return None
+
+def cargar_imagen(nombre, size=None):
+    """
+    Busca la imagen en assets/img y luego en la raíz.
+    Devuelve un Surface (fallback si no existe).
+    """
+    path = _first_existing([IMG_DIR / nombre, APP_ROOT / nombre])
+    try:
+        if path:
+            img = pygame.image.load(str(path)).convert_alpha()
+            if size:
+                img = pygame.transform.scale(img, size)
+            return img
+    except Exception as e:
+        print(f"[WARN] No se pudo cargar imagen {nombre}: {e}")
+  
+    w, h = size if size else (200, 200)
+    surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    surf.fill((30, 30, 30))
+    pygame.draw.rect(surf, (80, 80, 80), surf.get_rect(), 4)
+    return surf
+
+def cargar_sonido(nombre):
+    """
+    Busca el sonido en assets/sfx y luego en la raíz.
+    Si no hay mixer o no existe, devuelve None.
+    """
+    if not pygame.mixer.get_init():
+        return None
+    path = _first_existing([SFX_DIR / nombre, APP_ROOT / nombre])
+    try:
+        if path:
+            return pygame.mixer.Sound(str(path))
+    except Exception as e:
+        print(f"[WARN] No se pudo cargar sonido {nombre}: {e}")
+    return None
+
 ANCHO, ALTO = 800, 600
 FPS = 60
 
-# Colores
 BLANCO = (255, 255, 255)
 NEGRO  = (0, 0, 0)
 ROJO   = (255, 50, 50)
@@ -23,27 +68,11 @@ AZUL   = (0, 0, 255)
 GRIS   = (200, 200, 200)
 AMARILLO = (255, 255, 0)
 
-# ---------- WINDOW ----------
 pantalla = pygame.display.set_mode((ANCHO, ALTO))
 pygame.display.set_caption("Invasores Matemáticos")
 
-# ---------- LOAD ASSETS ----------
-def cargar_imagen(path, size=None):
-    try:
-        img = pygame.image.load(path).convert_alpha()
-        if size:
-            img = pygame.transform.scale(img, size)
-        return img
-    except:
-        # Fallback visual si falta imagen
-        surf = pygame.Surface(size if size else (200, 200))
-        surf.fill((30, 30, 30))
-        pygame.draw.rect(surf, (80, 80, 80), surf.get_rect(), 4)
-        return surf
-
 fondo_menu  = cargar_imagen("fondo_menu.jpg", (ANCHO, ALTO))
 fondo_juego = cargar_imagen("fondo_juego.jpg", (ANCHO, ALTO))
-# Sprite por operación
 sprite_plus  = cargar_imagen("alien_plus.png",  (100, 100))
 sprite_minus = cargar_imagen("alien_minus.png", (100, 100))
 sprite_mul   = cargar_imagen("alien_mul.png",   (100, 100))
@@ -54,36 +83,30 @@ SPRITE_POR_OP = {
     "*": sprite_mul,
 }
 
-def cargar_sonido(path):
-    try:
-        return pygame.mixer.Sound(path)
-    except:
-        return None
+sonido_correcto   = cargar_sonido("correcto.wav")
+sonido_incorrecto = cargar_sonido("incorrecto.wav")
+sonido_tiempo     = cargar_sonido("tiempo.wav")
+sonido_gameover   = cargar_sonido("gameover.wav")
+sonido_tecla      = cargar_sonido("tecla.wav")
 
-sonido_correcto  = cargar_sonido("correcto.wav")
-sonido_incorrecto= cargar_sonido("incorrecto.wav")
-sonido_tiempo    = cargar_sonido("tiempo.wav")
-sonido_gameover  = cargar_sonido("gameover.wav")
-sonido_tecla     = cargar_sonido("tecla.wav")
+fuente        = pygame.font.SysFont("consolas", 32)
+fuente_grande = pygame.font.SysFont("consolas", 60)
 
-# ---------- FONTS ----------
-fuente         = pygame.font.SysFont("consolas", 32)
-fuente_grande  = pygame.font.SysFont("consolas", 60)
+nombre_jugador  = ""
+en_menu         = True
+puntaje         = 0
+vidas           = 3
+nivel           = 1
+velocidad       = 1.5
+entrada_usuario = ""
+enemigo_actual  = None
 
-# ---------- STATE ----------
-nombre_jugador = ""
-en_menu        = True
-puntaje        = 0
-vidas          = 3
-nivel          = 1
-velocidad      = 1.5
-entrada_usuario= ""
-enemigo_actual = None
-
-# ---------- UTILS ----------
 def play(snd):
-    if snd: 
-        snd.play()
+    if snd:
+        try:
+            snd.play()
+        except Exception as e:
+            print(f"[WARN] No se pudo reproducir sonido: {e}")
 
 def reset_juego():
     global puntaje, vidas, nivel, velocidad, entrada_usuario
@@ -95,12 +118,11 @@ def reset_juego():
 
 def guardar_puntaje():
     try:
-        with open("puntajes.txt", "a", encoding="utf-8") as f:
+        with SCORE_FILE.open("a", encoding="utf-8") as f:
             f.write(f"{nombre_jugador}: Puntaje: {puntaje}, Nivel: {nivel}\n")
-    except:
-        pass
+    except Exception as e:
+        print(f"[WARN] No se pudo guardar puntaje: {e}")
 
-# ---------- ENEMY ----------
 class Enemigo:
     def __init__(self, pregunta, respuesta, op, velocidad_caida):
         self.pregunta  = pregunta
@@ -109,8 +131,6 @@ class Enemigo:
         self.x = ANCHO // 2 - 50
         self.y = 50
         self.velocidad = velocidad_caida
-
-        # Sprite según la operación
         self.sprite = SPRITE_POR_OP.get(op)
 
     def mover(self):
@@ -118,20 +138,11 @@ class Enemigo:
 
     def dibujar(self):
         pantalla.blit(self.sprite, (self.x, self.y))
-        # Color del texto por tipo de operación:
-        color = AMARILLO
-        if "+" in self.pregunta:
-            color = BLANCO
-        elif "-" in self.pregunta:
-            color = BLANCO
-        elif "*" in self.pregunta:
-            color = BLANCO
+        color = BLANCO
         texto = fuente.render(self.pregunta, True, color)
         pantalla.blit(texto, (self.x + 10, self.y + 100))
 
-# ---------- GAME LOGIC ----------
 def generar_pregunta():
-    # Escala la dificultad con el nivel
     a = random.randint(1, 10 + nivel)
     b = random.randint(1, 10 + nivel)
     op = random.choice(["+", "-", "*"])
@@ -144,23 +155,20 @@ def nueva_ronda():
     preg, res, op = generar_pregunta()
     enemigo_actual = Enemigo(preg, res, op, velocidad)
 
-# ---------- SCREENS ----------
 def mostrar_menu():
     pantalla.blit(fondo_menu, (0, 0))
-    # Título con sombra
     sombra = fuente_grande.render("Invasores Matemáticos", True, NEGRO)
     pantalla.blit(sombra, (ANCHO//2 - sombra.get_width()//2 + 2, 152))
     titulo = fuente_grande.render("Invasores Matemáticos", True, ROJO)
     pantalla.blit(titulo, (ANCHO//2 - titulo.get_width()//2, 150))
 
-    # Caja de nombre
     rect = pygame.Rect(ANCHO//2 - 200, 340, 400, 50)
     pygame.draw.rect(pantalla, (255, 255, 255), rect, border_radius=10)
     pygame.draw.rect(pantalla, NEGRO, rect, 2, border_radius=10)
     nombre_texto = fuente.render("Nombre: " + nombre_jugador, True, NEGRO)
     pantalla.blit(nombre_texto, (ANCHO//2 - nombre_texto.get_width()//2, 350))
 
-    sombra_sub = fuente.render("ENTER = Jugar    ESC = Salir", True,BLANCO)
+    sombra_sub = fuente.render("ENTER = Jugar    ESC = Salir", True, BLANCO)
     pantalla.blit(sombra_sub, (ANCHO//2 - sombra_sub.get_width()//2 + 2, 422))
     instruccion = fuente.render("ENTER = Jugar    ESC = Salir", True, NEGRO)
     pantalla.blit(instruccion, (ANCHO//2 - instruccion.get_width()//2, 420))
@@ -171,14 +179,12 @@ def dibujar_juego():
     pantalla.blit(fondo_juego, (0, 0))
     enemigo_actual.dibujar()
 
-    # Input
     caja = pygame.Rect(50, ALTO - 100, 700, 50)
     pygame.draw.rect(pantalla, BLANCO, caja, border_radius=10)
     pygame.draw.rect(pantalla, NEGRO, caja, 2, border_radius=10)
     texto_entrada = fuente.render("Tu respuesta: " + entrada_usuario, True, NEGRO)
     pantalla.blit(texto_entrada, (60, ALTO - 90))
 
-    # HUD
     texto_puntaje = fuente.render(f"Puntaje: {puntaje}", True, BLANCO)
     texto_vidas   = fuente.render(f"Vidas: {vidas}", True, BLANCO)
     texto_nivel   = fuente.render(f"Nivel: {nivel}", True, BLANCO)
@@ -222,7 +228,6 @@ def mostrar_game_over():
                     play(sonido_tecla)
                     pygame.quit(); sys.exit()
 
-# ---------- MAIN LOOP ----------
 reloj = pygame.time.Clock()
 ejecutando = True
 
@@ -247,7 +252,6 @@ while ejecutando:
                 elif evento.key == pygame.K_BACKSPACE:
                     nombre_jugador = nombre_jugador[:-1]
                 else:
-                    # Limitar a letras/números y longitud razonable
                     if evento.unicode.isalnum() and len(nombre_jugador) < 15:
                         nombre_jugador += evento.unicode
         continue
@@ -255,7 +259,6 @@ while ejecutando:
     if enemigo_actual is None:
         nueva_ronda()
 
-    # --- Eventos en juego ---
     for evento in pygame.event.get():
         if evento.type == pygame.QUIT:
             guardar_puntaje()
@@ -268,7 +271,6 @@ while ejecutando:
                         play(sonido_correcto)
                         puntaje += 10
                         nivel += 1
-                        # más nivel => más velocidad
                         velocidad += 0.25
                     else:
                         play(sonido_incorrecto)
@@ -281,28 +283,22 @@ while ejecutando:
             elif evento.key == pygame.K_BACKSPACE:
                 entrada_usuario = entrada_usuario[:-1]
             else:
-                # Permitir números y un '-' inicial
                 if evento.unicode.isdigit() or (evento.unicode == '-' and entrada_usuario == ''):
                     entrada_usuario += evento.unicode
 
-    # --- Lógica de caída / timeout ---
     enemigo_actual.mover()
     if enemigo_actual.y > ALTO - 150:
-        # No respondió a tiempo
         play(sonido_tiempo)
         vidas -= 1
         entrada_usuario = ""
         nueva_ronda()
 
-    # --- Game Over ---
     if vidas <= 0:
         guardar_puntaje()
         mostrar_game_over()
         if en_menu:
             continue
-        # Si reintentó, seguimos con el loop; si no, el método puede salir de la app.
 
-    # --- Render ---
     dibujar_juego()
 
 pygame.quit()
